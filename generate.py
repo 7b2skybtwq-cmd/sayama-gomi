@@ -3,7 +3,7 @@ import argparse, glob, json, os
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 try:
     import jpholiday
@@ -46,15 +46,15 @@ def font(size:int, weight:str="regular"):
                 return ImageFont.truetype(path, size=size)
     raise FileNotFoundError("Japanese font not found. Install fonts-noto-cjk.")
 
-def fit_font(draw, text, preferred_size, max_width, weight="black"):
+def fit_font(draw, text, preferred_size, max_width, weight="black", min_size=8):
     size = preferred_size
-    while size >= 48:
+    while size >= min_size:
         candidate = font(size, weight)
         box = draw.textbbox((0, 0), text, font=candidate)
         if box[2] - box[0] <= max_width:
             return candidate
-        size -= 2
-    return font(48, weight)
+        size -= 1
+    return font(min_size, weight)
 
 def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -77,10 +77,18 @@ def draw_center(draw, xy, text, fnt, fill=(25,25,25)):
     tw = box[2]-box[0]
     draw.text((x - tw/2, y), text, font=fnt, fill=fill)
 
+def draw_right(draw, xy, text, fnt, fill=(25,25,25)):
+    x, y = xy
+    box = draw.textbbox((0, 0), text, font=fnt)
+    draw.text((x - (box[2] - box[0]), y), text, font=fnt, fill=fill)
+
 def paste_icon(canvas, name, box):
     x,y,w,h = box
     icon_path = ROOT / "icons" / WASTE_TO_ICON.get(name, "none.png")
     icon = Image.open(icon_path).convert("RGBA")
+    alpha_box = icon.getchannel("A").getbbox()
+    if alpha_box:
+        icon = icon.crop(alpha_box)
     icon.thumbnail((w,h), Image.Resampling.LANCZOS)
     px = int(x + (w - icon.width)/2)
     py = int(y + (h - icon.height)/2)
@@ -102,41 +110,64 @@ def main():
     d = cfg["design"]
     cw, ch = cfg["canvas"]["width"], cfg["canvas"]["height"]
 
-    img = Image.new("RGBA", (cw, ch), (255,255,255,0))
-    shadow = Image.new("RGBA", (cw, ch), (255,255,255,0))
-    sd = ImageDraw.Draw(shadow)
+    img = Image.new("RGBA", (cw, ch), (255,255,255,255))
     m = d["margin"]
-    sd.rounded_rectangle((m,m,cw-m,ch-m), radius=d["card_radius"], fill=(0,0,0,30))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(12))
-    img.alpha_composite(shadow)
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle((m,m,cw-m,ch-m), radius=d["card_radius"], fill=(255,255,255,255), outline=(220,220,220,255), width=2)
+    draw.rounded_rectangle(
+        (m,m,cw-m-1,ch-m-1),
+        radius=d["card_radius"],
+        fill=(255,255,255,255),
+        outline=(190,190,190,255),
+        width=1,
+    )
 
     date_text = f"{today.year}年{today.month}月{today.day}日（{JP_WEEKDAYS[today.weekday()]}）"
     hname = holiday_name(today)
-    draw.text((d["date_x"], d["date_y"]), date_text, font=font(56, "bold"), fill=(20,20,20))
-    draw.line((d["header_separator_x"], 94, d["header_separator_x"], 151), fill=(205,205,205), width=2)
+    draw.text((d["date_x"], d["date_y"]), date_text, font=font(d["date_font_size"], "bold"), fill=(10,10,10))
+    draw.line(tuple(d["header_separator"]), fill=(195,195,195), width=1)
     if hname:
-        draw.text((d["holiday_x"], d["date_y"]+5), hname, font=font(38, "bold"), fill=(25,25,25))
-    draw.line((84, d["top_line_y"], cw-84, d["top_line_y"]), fill=(210,210,210), width=2)
+        draw.text((d["holiday_x"], d["holiday_y"]), hname, font=font(d["holiday_font_size"], "bold"), fill=(20,20,20))
+    draw.line(tuple(d["top_line"]), fill=(195,195,195), width=1)
 
     today_gomi = collection_for(today, today_data)
     tomorrow_gomi = collection_for(tomorrow, tomorrow_data)
 
     paste_icon(img, today_gomi, d["today_icon_box"])
-    draw.text((d["today_label_x"], d["today_label_y"]), "今日", font=font(72, "bold"), fill=(20,20,20))
-    today_font = fit_font(draw, today_gomi, 136, d["today_text_max_width"], "black")
-    draw.text((d["today_text_x"], d["today_text_y"]), today_gomi, font=today_font, fill=(20,20,20))
+    draw.text(
+        (d["today_label_x"], d["today_label_y"]),
+        "今日",
+        font=font(d["today_label_font_size"], "bold"),
+        fill=(10,10,10),
+    )
+    today_font = fit_font(
+        draw,
+        today_gomi,
+        d["today_text_font_size"],
+        d["today_text_max_width"],
+        "black",
+        d["today_text_min_font_size"],
+    )
+    draw.text((d["today_text_x"], d["today_text_y"]), today_gomi, font=today_font, fill=(5,5,5))
 
     # dotted divider
     y = d["divider_y"]
-    for x in range(85, cw-85, 14):
-        draw.line((x, y, x+5, y), fill=(205,205,205), width=4)
+    for x in range(d["divider_x1"], d["divider_x2"], d["divider_step"]):
+        draw.line((x, y, x+d["divider_dash"], y), fill=(175,175,175), width=1)
 
-    tx, ty = d["tomorrow_x"], d["tomorrow_y"]
-    draw.text((tx, ty), "明日", font=font(42, "bold"), fill=(25,25,25))
-    draw.text((tx, ty+55), tomorrow_gomi, font=font(42, "bold"), fill=(25,25,25))
-    draw.line(tuple(d["tomorrow_divider"]), fill=(210,210,210), width=2)
+    tomorrow_label_font = font(d["tomorrow_label_font_size"], "bold")
+    tomorrow_text_font = fit_font(
+        draw,
+        tomorrow_gomi,
+        d["tomorrow_text_font_size"],
+        d["tomorrow_text_max_width"],
+        "bold",
+        d["tomorrow_text_min_font_size"],
+    )
+    tomorrow_box = draw.textbbox((0, 0), tomorrow_gomi, font=tomorrow_text_font)
+    tomorrow_left = d["tomorrow_right"] - (tomorrow_box[2] - tomorrow_box[0])
+    draw.text((tomorrow_left, d["tomorrow_label_y"]), "明日", font=tomorrow_label_font, fill=(10,10,10))
+    draw_right(draw, (d["tomorrow_right"], d["tomorrow_text_y"]), tomorrow_gomi, tomorrow_text_font, fill=(10,10,10))
+    draw.line(tuple(d["tomorrow_divider"]), fill=(195,195,195), width=1)
     paste_icon(img, tomorrow_gomi, d["tomorrow_icon_box"])
 
     out = Path(args.output or cfg["output"])
