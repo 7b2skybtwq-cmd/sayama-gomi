@@ -30,3 +30,43 @@ jobs:
           git add index.png
           git diff --cached --quiet || git commit -m "Update Quote0 image"
           git push
+      - name: Send image to Quote/0
+        env:
+          QUOTE0_API_KEY: ${{ secrets.QUOTE0_API_KEY }}
+          QUOTE0_DEVICE_ID: ${{ secrets.QUOTE0_DEVICE_ID }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          device_id = urllib.parse.quote(os.environ["QUOTE0_DEVICE_ID"], safe="")
+          endpoint = f"https://dot.mindreset.tech/api/authV2/open/device/{device_id}/image"
+          payload = {
+              "refreshNow": True,
+              "image": base64.b64encode(Path("index.png").read_bytes()).decode("ascii"),
+              "border": 0,
+              "ditherType": "NONE",
+          }
+          request = urllib.request.Request(
+              endpoint,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {os.environ['QUOTE0_API_KEY']}",
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  print(response.read().decode("utf-8"))
+          except urllib.error.HTTPError as error:
+              print(error.read().decode("utf-8", errors="replace"), file=sys.stderr)
+              raise
+          PY
